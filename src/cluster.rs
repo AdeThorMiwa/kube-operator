@@ -1,47 +1,22 @@
-use std::{
-    collections::HashMap,
-    fmt::Display,
-    sync::{atomic::AtomicBool, Arc},
-    time::Duration,
-};
-
-use futures::StreamExt;
-use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
-use kube::{
-    api::{ListParams, PostParams, ResourceExt},
-    runtime::{controller::Action, Controller},
-    Api, Client, CustomResourceExt,
-};
-use tokio::{sync::Mutex, task::JoinHandle, time::sleep};
-use tracing::{debug, info};
-
 use crate::{
     node::{ComputeServer, Node, NodeStatus},
     utils::cluster::cluster_utils,
 };
+use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
+use kube::{
+    api::{ListParams, PostParams, ResourceExt},
+    Api, Client, CustomResourceExt,
+};
+use std::{
+    collections::HashMap,
+    sync::{atomic::AtomicBool, Arc},
+};
+use tokio::sync::Mutex;
 
 pub struct Cluster {
     client: Client,
     nodes: HashMap<usize, Arc<Mutex<Node>>>,
     pub ready: Arc<Mutex<AtomicBool>>,
-    cntrl: Option<JoinHandle<()>>,
-}
-
-struct ClusterCtx {
-    client: Client,
-    ready: Arc<Mutex<AtomicBool>>,
-    name: String,
-}
-
-#[derive(Debug, thiserror::Error)]
-enum ClusterReconcileError {
-    FinalizeError,
-}
-
-impl Display for ClusterReconcileError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
 }
 
 impl Cluster {
@@ -50,7 +25,6 @@ impl Cluster {
             client,
             nodes: HashMap::new(),
             ready: Arc::new(Mutex::new(AtomicBool::new(false))),
-            cntrl: None,
         }
     }
 
@@ -96,70 +70,20 @@ impl Cluster {
         has_running_node
     }
 
-    pub fn setup_controller(&mut self) {
-        let client = self.client.clone();
-        let ctx = ClusterCtx {
-            client: client.clone(),
-            ready: self.ready.clone(),
-            name: self.name(),
-        };
-        let controller = tokio::spawn(async move {
-            let crds = Api::<CustomResourceDefinition>::all(client);
-
-            Controller::new(crds.clone(), Default::default())
-                .run(Self::reconcile, Self::error_policy, Arc::new(ctx))
-                .for_each(|_| futures::future::ready(()))
-                .await;
-        });
-
-        self.cntrl = Some(controller)
-    }
-
-    async fn reconcile(
-        crd: Arc<CustomResourceDefinition>,
-        ctx: Arc<ClusterCtx>,
-    ) -> Result<Action, ClusterReconcileError> {
-        match cluster_utils::get_action(&crd) {
-            cluster_utils::ClusterReconcileAction::Create => {
-                info!("created crd: {}", crd.name_any());
-                ctx.ready
-                    .lock()
-                    .await
-                    .store(true, std::sync::atomic::Ordering::SeqCst);
-                Ok(Action::await_change())
-            }
-            cluster_utils::ClusterReconcileAction::Delete => {
-                cluster_utils::finalize(&ctx.name, ctx.client.clone())
-                    .await
-                    .map_err(|_| ClusterReconcileError::FinalizeError)?;
-                ctx.ready
-                    .lock()
-                    .await
-                    .store(true, std::sync::atomic::Ordering::SeqCst);
-                Ok(Action::await_change())
-            }
-            cluster_utils::ClusterReconcileAction::NoOp => {
-                Ok(Action::requeue(Duration::from_secs(5)))
+    pub async fn clean_old_versions(&self) -> anyhow::Result<()> {
+        cluster_utils::clean(&self.name(), self.client.clone()).await?;
+        'wait: loop {
+            match self.has_existing_version().await {
+                Ok(true) => continue,
+                _ => break 'wait,
             }
         }
-    }
-
-    fn error_policy(
-        crd: Arc<CustomResourceDefinition>,
-        err: &ClusterReconcileError,
-        _ctx: Arc<ClusterCtx>,
-    ) -> Action {
-        eprintln!("Reconciliation error:\n{:?}.\n{:?}", err, crd.name_any());
-        Action::requeue(Duration::from_secs(5))
-    }
-
-    pub async fn clean_old_versions(&self) -> anyhow::Result<()> {
-        Ok(cluster_utils::clean(&self.name(), self.client.clone()).await?)
+        Ok(())
     }
 
     pub async fn has_existing_version(&self) -> anyhow::Result<bool> {
         let crds: Api<CustomResourceDefinition> = Api::all(self.client.clone());
-        let res = crds.list(&ListParams::default()).await.unwrap();
+        let res = crds.list(&ListParams::default()).await?;
         Ok(res.items.len() > 0)
     }
 
@@ -167,21 +91,25 @@ impl Cluster {
         let crds: Api<CustomResourceDefinition> = Api::all(self.client.clone());
 
         let nodecrd = ComputeServer::crd();
-        info!(
-            "Creating Node CRD: {}",
-            serde_json::to_string_pretty(&nodecrd)?
-        );
+        println!("Creatingg CRD {}", nodecrd.name_any());
         let pp = PostParams::default();
         match crds.create(&pp, &nodecrd).await {
             Ok(o) => {
-                info!("Created {} ({:?})", o.name_any(), o.status.unwrap());
-                debug!("Created CRD: {:?}", o.spec);
+                println!("Created {}", o.name_any(),);
             }
-            Err(kube::Error::Api(ae)) => assert_eq!(ae.code, 409),
-            Err(e) => return Err(e.into()),
+            Err(e) => {
+                println!("error creating crd definition: {:?}", e);
+                return Err(e.into());
+            }
         }
 
-        sleep(Duration::from_secs(1)).await;
+        'wait: loop {
+            match self.has_existing_version().await {
+                Ok(true) => break 'wait,
+                _ => continue,
+            }
+        }
+
         Ok(())
     }
 }

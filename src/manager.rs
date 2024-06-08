@@ -58,20 +58,7 @@ impl NodeManager {
             self.cluster.clean_old_versions().await?;
         }
 
-        self.cluster.setup_controller();
         self.cluster.create_node_definitions().await?;
-        'wait_for_cluster_to_be_ready: loop {
-            if self
-                .cluster
-                .ready
-                .lock()
-                .await
-                .load(std::sync::atomic::Ordering::SeqCst)
-            {
-                break 'wait_for_cluster_to_be_ready;
-            }
-        }
-
         self.cluster.boot_nodes().await?;
 
         'keep_alive: loop {

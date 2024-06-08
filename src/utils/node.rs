@@ -35,6 +35,7 @@ pub mod node_utils {
                         containers: vec![Container {
                             name: name.to_owned(),
                             image: Some(image.to_owned()),
+                            image_pull_policy: Some("Never".to_owned()),
                             ports: Some(vec![ContainerPort {
                                 container_port: 8080,
                                 ..ContainerPort::default()

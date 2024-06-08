@@ -5,9 +5,6 @@ pub mod cluster_utils {
         Api, Client, Resource,
     };
     use serde_json::json;
-    use std::time::Duration;
-    use tokio::time::sleep;
-    use tracing::info;
 
     pub enum ClusterReconcileAction {
         Create,
@@ -21,18 +18,13 @@ pub mod cluster_utils {
 
         crds.delete(name, &dp).await.map(|res| {
             res.map_left(|o| {
-                info!(
-                    "Deleting {}: ({:?})",
-                    o.name_any(),
-                    o.status.unwrap().conditions.unwrap().last()
-                );
+                println!("Deleting {}", o.name_any(),);
             })
-            .map_right(|s| {
-                info!("Deleted {}: ({:?})", name, s);
+            .map_right(|_| {
+                println!("Deleted {}", name,);
             })
         })?;
 
-        sleep(Duration::from_secs(2)).await;
         Ok(())
     }
 

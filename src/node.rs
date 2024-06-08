@@ -198,6 +198,7 @@ impl Node {
                     .map_err(|_| NodeError::AddFinalizerError)?;
                 match Self::deploy_server(&server, client).await {
                     Ok(_) => {}
+                    Err(kube::Error::Api(e)) if e.code == 409 => {}
                     Err(e) => {
                         eprintln!(
                             "error during deployment for {} ------ {:?}",
@@ -213,16 +214,12 @@ impl Node {
             ComputerServerAction::Delete => {
                 match Self::destroy_server(&server, client.clone()).await {
                     Ok(_) => {}
-                    Err(kube::Error::Api(e)) if e.code == 404 => {
-                        // skip
-                    }
+                    Err(kube::Error::Api(e)) if e.code == 404 => {}
                     _ => return Err(NodeError::DestroyError),
                 }
                 match Self::remove_finalizer(&server, client.clone()).await {
                     Ok(_) => {}
-                    Err(kube::Error::Api(e)) if e.code == 404 => {
-                        // skip
-                    }
+                    Err(kube::Error::Api(e)) if e.code == 404 => {}
                     _ => return Err(NodeError::RemoveFinalizerError),
                 }
                 ctx.s.send(NodeEvent::Destroyed).await.unwrap();
@@ -237,7 +234,11 @@ impl Node {
         err: &NodeError,
         _ctx: Arc<ComputeServerCtx>,
     ) -> Action {
-        eprintln!("Reconciliation error:\n{:?}.\n{:?}", err, server.name_any());
+        eprintln!(
+            "Node Reconciliation error:{:?}. {:?}",
+            err,
+            server.name_any()
+        );
         Action::requeue(Duration::from_secs(5))
     }
 
