@@ -55,6 +55,8 @@ pub struct ComputeServerSpec {
     replicas: i32,
     #[garde(skip)]
     image: String,
+    #[garde(skip)]
+    port: i32,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
@@ -100,6 +102,7 @@ pub struct Node {
     image: String,
     cluster_name: String,
     replicas: i32,
+    port: i32,
     client: Client,
     controller: Option<JoinHandle<()>>,
     executor: Option<JoinHandle<()>>,
@@ -113,6 +116,7 @@ impl Node {
         image: &str,
         cluster_name: String,
         replicas: i32,
+        port: i32,
         client: Client,
     ) -> Self {
         Self {
@@ -120,6 +124,7 @@ impl Node {
             image: image.to_owned(),
             cluster_name,
             replicas,
+            port,
             client,
             controller: None,
             executor: None,
@@ -140,6 +145,7 @@ impl Node {
                 name: self.name(),
                 replicas: self.replicas,
                 image: self.image.to_owned(),
+                port: self.port,
             },
         );
         let compute = servers
@@ -299,7 +305,8 @@ impl Node {
         let replicas = server.spec.replicas;
         let mut labels: BTreeMap<String, String> = BTreeMap::new();
         labels.insert("app".to_owned(), name.to_owned());
-        let deployment = get_deployment_definition(&name, &namespace, image, replicas, labels);
+        let deployment =
+            get_deployment_definition(&name, &namespace, image, replicas, server.spec.port, labels);
         let deployment_api = Api::<Deployment>::namespaced(client.clone(), &namespace);
         let deployment = deployment_api
             .create(&PostParams::default(), &deployment)

@@ -27,7 +27,7 @@ impl NodeManager {
         Ok(Self { cluster })
     }
 
-    pub fn new_node(&mut self, image: &str, replicas: i32) -> usize {
+    pub fn new_node(&mut self, image: &str, port: i32, replicas: i32) -> usize {
         let client = self.cluster.get_client();
         let node_id = self.cluster.get_next_node_id();
         let node = Arc::new(Mutex::new(Node::new(
@@ -35,6 +35,7 @@ impl NodeManager {
             image,
             self.cluster.name(),
             replicas,
+            port,
             client,
         )));
         self.cluster.add_node(node_id, node);

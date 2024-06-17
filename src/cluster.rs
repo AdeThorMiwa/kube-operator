@@ -2,21 +2,18 @@ use crate::{
     node::{ComputeServer, Node, NodeStatus},
     utils::cluster::cluster_utils,
 };
+use either::Either::{Left, Right};
 use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use kube::{
-    api::{ListParams, PostParams, ResourceExt},
+    api::{DeleteParams, ListParams, PostParams, ResourceExt},
     Api, Client, CustomResourceExt,
 };
-use std::{
-    collections::HashMap,
-    sync::{atomic::AtomicBool, Arc},
-};
-use tokio::sync::Mutex;
+use std::{collections::HashMap, sync::Arc, time::Duration};
+use tokio::{sync::Mutex, time::sleep};
 
 pub struct Cluster {
     client: Client,
     nodes: HashMap<usize, Arc<Mutex<Node>>>,
-    pub ready: Arc<Mutex<AtomicBool>>,
 }
 
 impl Cluster {
@@ -24,7 +21,6 @@ impl Cluster {
         Self {
             client,
             nodes: HashMap::new(),
-            ready: Arc::new(Mutex::new(AtomicBool::new(false))),
         }
     }
 
@@ -71,6 +67,22 @@ impl Cluster {
     }
 
     pub async fn clean_old_versions(&self) -> anyhow::Result<()> {
+        let servers: Api<ComputeServer> = Api::default_namespaced(self.client.clone());
+
+        match servers
+            .delete_collection(&DeleteParams::default(), &ListParams::default())
+            .await?
+        {
+            Left(list) => {
+                let deleted: Vec<_> = list.iter().map(ResourceExt::name_any).collect();
+                println!("Deleting collection of foos: {:?}", deleted);
+            }
+            Right(status) => {
+                println!("Deleted collection of crds: status={:?}", status);
+            }
+        }
+
+        sleep(Duration::from_secs(2)).await;
         cluster_utils::clean(&self.name(), self.client.clone()).await?;
         'wait: loop {
             match self.has_existing_version().await {
