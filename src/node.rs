@@ -1,4 +1,6 @@
-use crate::utils::node::node_utils::{get_deployment_definition, get_node_port_service_definition};
+use crate::utils::node::node_utils::{
+    get_deployment_definition, get_name_and_namespace, get_node_port_service_definition,
+};
 use anyhow::Context;
 use futures::{Future, StreamExt};
 use garde::Validate;
@@ -56,7 +58,7 @@ pub struct ComputeServerSpec {
     #[garde(skip)]
     image: String,
     #[garde(skip)]
-    port: i32,
+    pub port: i32,
     #[garde(skip)]
     expose: bool,
 }
@@ -283,7 +285,7 @@ impl Node {
         server: &ComputeServer,
         client: Client,
     ) -> Result<ComputeServer, kube::Error> {
-        let (name, namespace) = Self::get_name_and_namespace(&server)?;
+        let (name, namespace) = get_name_and_namespace(&server)?;
         let api = Api::<ComputeServer>::namespaced(client, &namespace);
         let finalizer: Value = json!({
             "metadata": {
@@ -299,7 +301,7 @@ impl Node {
         server: &ComputeServer,
         client: Client,
     ) -> Result<ComputeServer, kube::Error> {
-        let (name, namespace) = Self::get_name_and_namespace(&server)?;
+        let (name, namespace) = get_name_and_namespace(&server)?;
         let api = Api::<ComputeServer>::namespaced(client, &namespace);
         let finalizer: Value = json!({
             "metadata": {
@@ -315,7 +317,7 @@ impl Node {
         server: &ComputeServer,
         client: Client,
     ) -> Result<Deployment, kube::Error> {
-        let (name, namespace) = Self::get_name_and_namespace(&server)?;
+        let (name, namespace) = get_name_and_namespace(&server)?;
         let image = &server.spec.image;
         let replicas = server.spec.replicas;
         let mut labels: BTreeMap<String, String> = BTreeMap::new();
@@ -339,7 +341,7 @@ impl Node {
     }
 
     async fn expose_server(server: &ComputeServer, client: Client) -> Result<Service, kube::Error> {
-        let (name, namespace) = Self::get_name_and_namespace(&server)?;
+        let (name, namespace) = get_name_and_namespace(&server)?;
         let mut labels: BTreeMap<String, String> = BTreeMap::new();
         labels.insert("app".to_owned(), name.to_owned());
         let expose_service =
@@ -360,25 +362,10 @@ impl Node {
     }
 
     async fn destroy_server(server: &ComputeServer, client: Client) -> Result<(), kube::Error> {
-        let (name, namespace) = Self::get_name_and_namespace(&server)?;
+        let (name, namespace) = get_name_and_namespace(&server)?;
         let api: Api<Deployment> = Api::namespaced(client, &namespace);
         api.delete(&name, &DeleteParams::default()).await?;
         Ok(())
-    }
-
-    fn get_name_and_namespace(server: &ComputeServer) -> Result<(String, String), kube::Error> {
-        let name = server.name_any();
-        let namespace = match server.namespace() {
-            None => {
-                let e = "Expected Echo resource to be namespaced. Can't deploy to an unknown namespace.";
-                return Err(kube::Error::Discovery(
-                    kube::error::DiscoveryError::MissingResource(e.to_owned()),
-                ));
-            }
-            Some(namespace) => namespace,
-        };
-
-        Ok((name, namespace))
     }
 
     fn _destroy(self) {

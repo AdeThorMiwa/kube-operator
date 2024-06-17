@@ -11,7 +11,9 @@ pub mod node_utils {
         },
         apimachinery::pkg::{apis::meta::v1::LabelSelector, util::intstr::IntOrString},
     };
-    use kube::api::ObjectMeta;
+    use kube::{api::ObjectMeta, ResourceExt};
+
+    use crate::node::ComputeServer;
 
     pub fn get_deployment_definition(
         name: &str,
@@ -86,5 +88,20 @@ pub mod node_utils {
             }),
             ..Service::default()
         }
+    }
+
+    pub fn get_name_and_namespace(server: &ComputeServer) -> Result<(String, String), kube::Error> {
+        let name = server.name_any();
+        let namespace = match server.namespace() {
+            None => {
+                let e = "Expected Echo resource to be namespaced. Can't deploy to an unknown namespace.";
+                return Err(kube::Error::Discovery(
+                    kube::error::DiscoveryError::MissingResource(e.to_owned()),
+                ));
+            }
+            Some(namespace) => namespace,
+        };
+
+        Ok((name, namespace))
     }
 }
