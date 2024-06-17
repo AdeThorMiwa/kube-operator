@@ -36,6 +36,7 @@ impl NodeManager {
             self.cluster.name(),
             replicas,
             port,
+            true,
             client,
         )));
         self.cluster.add_node(node_id, node);

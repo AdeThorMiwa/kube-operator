@@ -3,10 +3,13 @@ pub mod node_utils {
 
     use k8s_openapi::{
         api::{
-            apps::v1::{Deployment, DeploymentSpec, },
-            core::v1::{Container, ContainerPort, PodSpec, PodTemplateSpec},
+            apps::v1::{Deployment, DeploymentSpec},
+            core::v1::{
+                Container, ContainerPort, PodSpec, PodTemplateSpec, Service, ServicePort,
+                ServiceSpec,
+            },
         },
-        apimachinery::pkg::apis::meta::v1::LabelSelector,
+        apimachinery::pkg::{apis::meta::v1::LabelSelector, util::intstr::IntOrString},
     };
     use kube::api::ObjectMeta;
 
@@ -55,6 +58,33 @@ pub mod node_utils {
                 ..DeploymentSpec::default()
             }),
             ..Deployment::default()
+        }
+    }
+
+    pub fn get_node_port_service_definition(
+        name: &str,
+        namespace: &str,
+        port: i32,
+        labels: BTreeMap<String, String>,
+    ) -> Service {
+        Service {
+            metadata: ObjectMeta {
+                name: Some(name.to_owned()),
+                namespace: Some(namespace.to_owned()),
+                labels: Some(labels.clone()),
+                ..ObjectMeta::default()
+            },
+            spec: Some(ServiceSpec {
+                type_: Some("NodePort".to_owned()),
+                selector: Some(labels),
+                ports: Some(vec![ServicePort {
+                    port,
+                    target_port: Some(IntOrString::Int(port)),
+                    ..ServicePort::default()
+                }]),
+                ..ServiceSpec::default()
+            }),
+            ..Service::default()
         }
     }
 }

@@ -1,8 +1,8 @@
-use crate::utils::node::node_utils::get_deployment_definition;
+use crate::utils::node::node_utils::{get_deployment_definition, get_node_port_service_definition};
 use anyhow::Context;
 use futures::{Future, StreamExt};
 use garde::Validate;
-use k8s_openapi::api::apps::v1::Deployment;
+use k8s_openapi::api::{apps::v1::Deployment, core::v1::Service};
 use kube::{
     api::{Api, DeleteParams, Patch, PatchParams, PostParams, ResourceExt},
     runtime::{controller::Action, Controller},
@@ -57,12 +57,15 @@ pub struct ComputeServerSpec {
     image: String,
     #[garde(skip)]
     port: i32,
+    #[garde(skip)]
+    expose: bool,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default, JsonSchema)]
 pub struct ComputeServerStatus {
     replicas: u32,
     is_deployed: bool,
+    exposed: bool,
 }
 
 enum ComputerServerAction {
@@ -108,6 +111,7 @@ pub struct Node {
     executor: Option<JoinHandle<()>>,
     pub status: NodeStatus,
     compute: Option<ComputeServer>,
+    expose: bool,
 }
 
 impl Node {
@@ -117,6 +121,7 @@ impl Node {
         cluster_name: String,
         replicas: i32,
         port: i32,
+        expose: bool,
         client: Client,
     ) -> Self {
         Self {
@@ -130,6 +135,7 @@ impl Node {
             executor: None,
             status: NodeStatus::Idle,
             compute: None,
+            expose,
         }
     }
 
@@ -146,6 +152,7 @@ impl Node {
                 replicas: self.replicas,
                 image: self.image.to_owned(),
                 port: self.port,
+                expose: self.expose,
             },
         );
         let compute = servers
@@ -202,18 +209,26 @@ impl Node {
                 Self::add_finalizer(&ctx.cluster_name, &server, client.clone())
                     .await
                     .map_err(|_| NodeError::AddFinalizerError)?;
-                match Self::deploy_server(&server, client).await {
+                match Self::deploy_server(&server, client.clone()).await {
                     Ok(_) => {}
                     Err(kube::Error::Api(e)) if e.code == 409 => {}
                     Err(e) => {
-                        eprintln!(
-                            "error during deployment for {} ------ {:?}",
-                            server.name_any(),
-                            e
-                        );
+                        eprintln!("error deploying {} ------ {:?}", server.name_any(), e);
                         return Err(NodeError::DeploymentError);
                     }
                 }
+
+                if server.spec.expose {
+                    match Self::expose_server(&server, client).await {
+                        Ok(_) => {}
+                        Err(kube::Error::Api(e)) if e.code == 409 => {}
+                        Err(e) => {
+                            eprintln!("error exposing {} ------ {:?}", server.name_any(), e);
+                            return Err(NodeError::DeploymentError);
+                        }
+                    }
+                }
+
                 ctx.s.send(NodeEvent::Created).await.unwrap();
                 Ok(Action::requeue(Duration::from_secs(5)))
             }
@@ -314,13 +329,34 @@ impl Node {
 
         // update status
         let status_data = json!({
-            "status": ComputeServerStatus { is_deployed: true, replicas: 1 }
+            "status": ComputeServerStatus { is_deployed: true, replicas: 1, exposed: false, }
         });
         let servers = Api::<ComputeServer>::namespaced(client, &namespace);
         servers
             .patch_status(&name, &PatchParams::default(), &Patch::Merge(&status_data))
             .await?;
         deployment
+    }
+
+    async fn expose_server(server: &ComputeServer, client: Client) -> Result<Service, kube::Error> {
+        let (name, namespace) = Self::get_name_and_namespace(&server)?;
+        let mut labels: BTreeMap<String, String> = BTreeMap::new();
+        labels.insert("app".to_owned(), name.to_owned());
+        let expose_service =
+            get_node_port_service_definition(&name, &namespace, server.spec.port, labels);
+        let service_api = Api::<Service>::namespaced(client.clone(), &namespace);
+        let expose_service = service_api
+            .create(&PostParams::default(), &expose_service)
+            .await;
+
+        let status_data = json!({
+            "status": ComputeServerStatus { is_deployed: true, replicas: 1, exposed: true, }
+        });
+        let servers = Api::<ComputeServer>::namespaced(client, &namespace);
+        servers
+            .patch_status(&name, &PatchParams::default(), &Patch::Merge(&status_data))
+            .await?;
+        expose_service
     }
 
     async fn destroy_server(server: &ComputeServer, client: Client) -> Result<(), kube::Error> {
