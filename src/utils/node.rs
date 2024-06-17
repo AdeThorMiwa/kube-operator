@@ -3,7 +3,7 @@ pub mod node_utils {
 
     use k8s_openapi::{
         api::{
-            apps::v1::{Deployment, DeploymentSpec},
+            apps::v1::{Deployment, DeploymentSpec, },
             core::v1::{Container, ContainerPort, PodSpec, PodTemplateSpec},
         },
         apimachinery::pkg::apis::meta::v1::LabelSelector,
@@ -15,6 +15,7 @@ pub mod node_utils {
         namespace: &str,
         image: &str,
         replicas: i32,
+        port: i32,
         labels: BTreeMap<String, String>,
     ) -> Deployment {
         Deployment {
@@ -32,12 +33,14 @@ pub mod node_utils {
                 },
                 template: PodTemplateSpec {
                     spec: Some(PodSpec {
+                        host_network: Some(true),
                         containers: vec![Container {
                             name: name.to_owned(),
                             image: Some(image.to_owned()),
                             image_pull_policy: Some("Never".to_owned()),
                             ports: Some(vec![ContainerPort {
-                                container_port: 8080,
+                                container_port: port,
+                                host_port: Some(port),
                                 ..ContainerPort::default()
                             }]),
                             ..Container::default()
