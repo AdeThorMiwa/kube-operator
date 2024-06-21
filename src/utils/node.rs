@@ -48,6 +48,7 @@ pub mod node_utils {
                                 host_port: Some(port),
                                 ..ContainerPort::default()
                             }]),
+                            args: Some(vec![String::from("--port"), format!("{port}")]),
                             ..Container::default()
                         }],
                         ..PodSpec::default()

@@ -1,5 +1,8 @@
-use crate::utils::node::node_utils::{
-    get_deployment_definition, get_name_and_namespace, get_node_port_service_definition,
+use crate::{
+    channel::{MessageChannel, SubscribeMessage},
+    utils::node::node_utils::{
+        get_deployment_definition, get_name_and_namespace, get_node_port_service_definition,
+    },
 };
 use anyhow::Context;
 use futures::{Future, StreamExt};
@@ -14,7 +17,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, fmt::Display, sync::Arc, time::Duration};
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::sync::mpsc;
 use tracing::*;
 
 #[derive(thiserror::Error, Debug)]
@@ -37,6 +40,8 @@ pub type ReconcileResult<T, E = NodeError> = std::result::Result<T, E>;
 pub enum NodeEvent {
     Created,
     Destroyed,
+    MapCompleted,
+    ReduceCompleted,
 }
 
 #[derive(CustomResource, Deserialize, Serialize, Clone, Debug, Validate, JsonSchema)]
@@ -109,8 +114,6 @@ pub struct Node {
     replicas: i32,
     port: i32,
     client: Client,
-    controller: Option<JoinHandle<()>>,
-    executor: Option<JoinHandle<()>>,
     pub status: NodeStatus,
     compute: Option<ComputeServer>,
     expose: bool,
@@ -133,8 +136,6 @@ impl Node {
             replicas,
             port,
             client,
-            controller: None,
-            executor: None,
             status: NodeStatus::Idle,
             compute: None,
             expose,
@@ -173,10 +174,11 @@ impl Node {
         R: Future<Output = ()> + Send,
     {
         let (s, mut r) = mpsc::channel(1);
-        let ctx = ComputeServerCtx::new(self.id, &self.cluster_name, self.client.clone(), s);
+        let ctx =
+            ComputeServerCtx::new(self.id, &self.cluster_name, self.client.clone(), s.clone());
 
         let client = self.client.clone();
-        let controller = tokio::spawn(async move {
+        tokio::spawn(async move {
             let pods = Api::<ComputeServer>::all(client);
             Controller::new(pods.clone(), Default::default())
                 .run(Self::reconcile, Self::error_policy, Arc::new(ctx))
@@ -184,15 +186,23 @@ impl Node {
                 .await;
         });
 
-        let executor = tokio::spawn(async move {
+        let publisher = MessageChannel::new(self.port);
+        let event_handler = |e| async move {
+            let e = match e {
+                SubscribeMessage::MapCompleted => NodeEvent::MapCompleted,
+                SubscribeMessage::ReduceCompleted => NodeEvent::ReduceCompleted,
+            };
+
+            s.send(e).await.unwrap();
+        };
+        publisher.subscribe(event_handler);
+
+        tokio::spawn(async move {
             while let Some(e) = r.recv().await {
                 let on_event = on_event.clone();
                 on_event(e).await;
             }
         });
-
-        self.controller = Some(controller);
-        self.executor = Some(executor);
     }
 
     async fn reconcile(

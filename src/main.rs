@@ -5,8 +5,8 @@ use operator::manager::NodeManager;
 async fn main() -> Result<()> {
     let mut node_manager = NodeManager::try_default().await.unwrap();
 
-    let node1 = node_manager.new_node("ptest:latest", 4001, 1);
-    let node2 = node_manager.new_node("ptest2:latest", 4002, 1);
+    let node1 = node_manager.new_node("dockerizer:latest", 4001, 1);
+    let node2 = node_manager.new_node("dockerizer:latest", 4002, 1);
 
     let watch_handler = |event| async move { println!("new event {:?}", event) };
     node_manager.watch_node(node1, watch_handler).await;
