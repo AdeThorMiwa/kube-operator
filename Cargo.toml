@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 tokio = { version = "1.38.0", features = ["macros", "rt-multi-thread"] } # Macros for easy project setup and testing, multi-threaded runtime for best utilization of resources
-kube = { version = "0.91.0", features = ["runtime", "derive"] }
+kube = { version = "0.91.0", features = ["runtime", "derive", "ws"] }
 k8s-openapi = { version = "0.22.0", features = ["latest"] }
 futures = "0.3.30"
 # All serde dependencies are used to serialize/deserialize CRDs and other Kubernetes-related structs
@@ -20,3 +20,5 @@ either = "1.12.0"
 anyhow = "1.0.86"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
+reqwest = { version = "0.12.5", features = ["json"] }
+reqwest-eventsource = "0.6.0"
