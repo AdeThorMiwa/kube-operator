@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use futures::{Future, StreamExt};
 use reqwest_eventsource::{Event, EventSource};
 use serde::{Deserialize, Serialize};
+use tokio::sync::Notify;
 
 pub struct MessageChannel {
     port: i32,
@@ -40,7 +43,7 @@ impl MessageChannel {
         Ok(())
     }
 
-    pub fn subscribe<H, R>(&self, handler: H)
+    pub fn subscribe<H, R>(&self, handler: H, notifier: Arc<Notify>)
     where
         H: Send + Clone + 'static,
         H: FnOnce(SubscribeMessage) -> R,
@@ -48,6 +51,7 @@ impl MessageChannel {
     {
         let mut es = EventSource::get(format!("{}/events", self.get_full_url()));
         tokio::spawn(async move {
+            notifier.notified().await;
             loop {
                 if let Some(event) = es.next().await {
                     match event {
@@ -58,7 +62,7 @@ impl MessageChannel {
                         }
                         Err(err) => {
                             println!("Error: {}", err);
-                            // es.close();
+                            es.close();
                         }
                     }
                 }
@@ -67,6 +71,9 @@ impl MessageChannel {
     }
 
     fn get_full_url(&self) -> String {
-        format!("http:127.0.0.1:{}", self.port)
+        // assumption here is that the master node (node running the NodeManager code)
+        // will also be in the cluster where all the child nodes are running
+        // therefore network communication will be local
+        format!("http://localhost:{}", self.port)
     }
 }

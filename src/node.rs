@@ -17,7 +17,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, fmt::Display, sync::Arc, time::Duration};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 use tracing::*;
 
 #[derive(thiserror::Error, Debug)]
@@ -117,6 +117,7 @@ pub struct Node {
     pub status: NodeStatus,
     compute: Option<ComputeServer>,
     expose: bool,
+    notifier: Option<Arc<Notify>>,
 }
 
 impl Node {
@@ -139,6 +140,7 @@ impl Node {
             status: NodeStatus::Idle,
             compute: None,
             expose,
+            notifier: None,
         }
     }
 
@@ -164,6 +166,9 @@ impl Node {
             .with_context(|| format!("creating compute server for node {}", self.name()))?;
         self.compute = Some(compute);
         self.status = NodeStatus::Running;
+        if let Some(notifier) = &self.notifier {
+            notifier.notify_one();
+        }
         Ok(())
     }
 
@@ -195,7 +200,9 @@ impl Node {
 
             s.send(e).await.unwrap();
         };
-        publisher.subscribe(event_handler);
+        let notifier = Arc::new(Notify::new());
+        self.notifier = Some(notifier.clone());
+        publisher.subscribe(event_handler, notifier);
 
         tokio::spawn(async move {
             while let Some(e) = r.recv().await {
